@@ -1,3 +1,4 @@
+mod entities;
 mod resource;
 use crate::resource::Resource;
 use std::any::Any;
