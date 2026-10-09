@@ -33,8 +33,13 @@ impl World {
     /// let resource = world.`get_resource::<u32>`().unwarp();
     /// assert_eq(*resource, 11);
     /// '''
-    ///
     pub fn get_resource_mut<T: Any>(&mut self) -> Option<&mut T> {
         self.resources.get_mut::<T>()
+    }
+
+    /// This will remove the resource from the world, and it doesn't care if the resource exist at this point of time.
+    ///
+    pub fn delete_resource<T: Any>(&mut self) {
+        self.resources.remove::<T>();
     }
 }
