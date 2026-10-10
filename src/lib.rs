@@ -1,5 +1,6 @@
+mod custom_errors;
 mod entities;
-mod resource;
+pub mod resource;
 use crate::{entities::Entities, resource::Resource};
 use std::any::Any;
 
