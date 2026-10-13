@@ -1,5 +1,6 @@
+pub mod query;
 use crate::custom_errors::CustomErrors;
-use eyre::{Result, bail};
+use eyre::Result;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -10,33 +11,62 @@ use std::{
 #[derive(Debug, Default)]
 pub struct Entities {
     components: HashMap<TypeId, Vec<Option<Rc<RefCell<dyn Any>>>>>,
+    bit_masks: HashMap<TypeId, u32>,
+    map: Vec<u32>,
 }
 
 impl Entities {
     pub fn register_component<T: Any + 'static>(&mut self) {
-        self.components.insert(TypeId::of::<T>(), vec![]);
+        let type_id = TypeId::of::<T>();
+        let bit_masks = 2_u32.pow(self.bit_masks.len() as u32);
+        self.components.insert(type_id, vec![]);
+        self.bit_masks.insert(type_id, bit_masks);
     }
 
     pub fn create_entity(&mut self) -> &mut Self {
         self.components
             .iter_mut()
             .for_each(|(_key, components)| components.push(None));
+
+        self.map.push(0);
         self
     }
 
     pub fn with_component(&mut self, data: impl Any) -> Result<&mut Self> {
         let type_id = data.type_id();
+        let map_index = self.map.len() - 1;
+
         if let Some(components) = self.components.get_mut(&type_id) {
             let last_component = components
                 .last_mut()
                 .ok_or(CustomErrors::CreateComponentNeverCalled)?;
 
             *last_component = Some(Rc::new(RefCell::new(data)));
+
+            let bitmask = self.bit_masks.get(&type_id).unwrap();
+            self.map[map_index] |= *bitmask;
         } else {
             return Err(CustomErrors::ComponentNotRegistered.into());
         }
 
         Ok(self)
+    }
+
+    pub fn get_bitmask(&self, type_id: &TypeId) -> Option<u32> {
+        self.bit_masks.get(type_id).copied()
+    }
+
+    pub fn delete_component_by_entity_id<T: Any>(&mut self, index: usize) -> Result<()> {
+        let type_id = TypeId::of::<T>();
+        let mask = if let Some(mask) = self.bit_masks.get(&type_id) {
+            mask
+        } else {
+            return Err(CustomErrors::ComponentNotRegistered.into());
+        };
+
+        self.map[0] ^= *mask;
+
+        Ok(())
     }
 }
 
@@ -52,6 +82,18 @@ mod tests {
         entities.register_component::<Health>();
         let health_component = entities.components.get(&TypeId::of::<Health>()).unwrap();
         assert_eq!(health_component.len(), 0);
+    }
+
+    #[test]
+    fn bitmask_updated_when_registering_an_entities() {
+        let mut entities = Entities::default();
+        entities.register_component::<Health>();
+        let health_mask = entities.bit_masks.get(&TypeId::of::<Health>()).unwrap();
+        assert_eq!(*health_mask, 1);
+
+        entities.register_component::<Speed>();
+        let speed_mask = entities.bit_masks.get(&TypeId::of::<Speed>()).unwrap();
+        assert_eq!(*speed_mask, 2);
     }
 
     #[test]
@@ -85,6 +127,44 @@ mod tests {
         let health = borrowed_health.downcast_ref::<Health>().unwrap();
 
         assert_eq!(health.0, 100);
+        Ok(())
+    }
+
+    #[test]
+    fn map_is_updated_when_creating_entities() -> Result<()> {
+        let mut entities = Entities::default();
+        entities.register_component::<Health>();
+        entities.register_component::<Speed>();
+        entities
+            .create_entity()
+            .with_component(Health(100))?
+            .with_component(Speed(15))?;
+
+        let entity_map = entities.map[0];
+        assert_eq!(entity_map, 3);
+
+        entities.create_entity().with_component(Speed(15))?;
+
+        let entity_map = entities.map[1];
+        assert_eq!(entity_map, 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_component_by_entity_id() -> Result<()> {
+        let mut entities = Entities::default();
+        entities.register_component::<Health>();
+        entities.register_component::<Speed>();
+        entities
+            .create_entity()
+            .with_component(Health(100))?
+            .with_component(Speed(15))?;
+
+        entities.delete_component_by_entity_id::<Health>(0)?;
+
+        assert_eq!(entities.map[0], 2);
+
         Ok(())
     }
 

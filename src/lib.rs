@@ -1,7 +1,12 @@
 mod custom_errors;
 mod entities;
 pub mod resource;
-use crate::{entities::Entities, resource::Resource};
+use eyre::Result;
+
+use crate::{
+    entities::{Entities, query::Query},
+    resource::Resource,
+};
 use std::any::Any;
 
 #[derive(Debug, Default)]
@@ -52,5 +57,13 @@ impl World {
 
     pub fn create_entity(&mut self) -> &mut Entities {
         self.entities.create_entity()
+    }
+
+    pub fn query(&self) -> Query<'_> {
+        Query::new(&self.entities)
+    }
+
+    pub fn delete_component_by_entity_id<T: Any>(&mut self, index: usize) -> Result<()> {
+        self.entities.delete_component_by_entity_id::<T>(index)
     }
 }
