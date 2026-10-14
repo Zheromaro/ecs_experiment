@@ -13,6 +13,7 @@ pub struct Entities {
     components: HashMap<TypeId, Vec<Option<Rc<RefCell<dyn Any>>>>>,
     bit_masks: HashMap<TypeId, u32>,
     map: Vec<u32>,
+    inserting_into_index: usize,
 }
 
 impl Entities {
@@ -24,27 +25,31 @@ impl Entities {
     }
 
     pub fn create_entity(&mut self) -> &mut Self {
-        self.components
-            .iter_mut()
-            .for_each(|(_key, components)| components.push(None));
+        if let Some((index, _)) = self.map.iter().enumerate().find(|(_, mask)| **mask == 0) {
+            self.inserting_into_index = index;
+        } else {
+            self.components
+                .iter_mut()
+                .for_each(|(_key, components)| components.push(None));
 
-        self.map.push(0);
+            self.map.push(0);
+        }
         self
     }
 
     pub fn with_component(&mut self, data: impl Any) -> Result<&mut Self> {
         let type_id = data.type_id();
-        let map_index = self.map.len() - 1;
+        let index = self.inserting_into_index;
 
         if let Some(components) = self.components.get_mut(&type_id) {
-            let last_component = components
-                .last_mut()
+            let component = components
+                .get_mut(index)
                 .ok_or(CustomErrors::CreateComponentNeverCalled)?;
 
-            *last_component = Some(Rc::new(RefCell::new(data)));
+            *component = Some(Rc::new(RefCell::new(data)));
 
             let bitmask = self.bit_masks.get(&type_id).unwrap();
-            self.map[map_index] |= *bitmask;
+            self.map[index] |= *bitmask;
         } else {
             return Err(CustomErrors::ComponentNotRegistered.into());
         }
@@ -84,15 +89,22 @@ impl Entities {
 
         Ok(())
     }
+
+    pub fn delete_entity_by_id(&mut self, index: usize) -> Result<()> {
+        if let Some(map) = self.map.get_mut(index) {
+            *map = 0;
+        } else {
+            return Err(CustomErrors::EntityDoesNotExist.into());
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::any::TypeId;
-
-    use eyre::Ok;
-
     use super::*;
+    use eyre::Ok;
+    use std::any::TypeId;
 
     #[test]
     fn register_entity() {
@@ -204,6 +216,39 @@ mod tests {
         let speed = borrowed_speed.downcast_ref::<Speed>().unwrap();
 
         assert_eq!(speed.0, 50);
+        Ok(())
+    }
+
+    #[test]
+    fn delete_entity_by_id() -> Result<()> {
+        let mut entities = Entities::default();
+        entities.register_component::<Health>();
+        entities.create_entity().with_component(Health(100))?;
+        entities.delete_entity_by_id(0)?;
+
+        assert_eq!(entities.map[0], 0);
+        Ok(())
+    }
+
+    #[test]
+    fn created_entities_are_inserted_into_deleted_entities_columes() -> Result<()> {
+        let mut entities = Entities::default();
+        entities.register_component::<Health>();
+        entities.create_entity().with_component(Health(100))?;
+        entities.create_entity().with_component(Health(50))?;
+        entities.delete_entity_by_id(0)?;
+        entities.create_entity().with_component(Health(25))?;
+
+        assert_eq!(entities.map[0], 1);
+
+        let type_id = TypeId::of::<Health>();
+        let borrowed_health = entities.components.get(&type_id).unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .borrow();
+        let health = borrowed_health.downcast_ref::<Health>().unwrap();
+        assert_eq!(health.0, 25);
+
         Ok(())
     }
 
